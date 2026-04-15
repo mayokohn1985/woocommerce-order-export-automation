@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Order Export & Automation
  * Plugin URI: https://github.com/mayokohn1985/woocommerce-order-export-automation
  * Description: Automatically export WooCommerce orders and send them where they need to go. CSV, JSON, API, automation.
- * Version: 0.2.0
+ * Version: 0.3.0
  * Author: Marián Kohn
  * Author URI: https://mayokohn.com
  * License: GPL2+
@@ -38,9 +38,10 @@ if (!wooflow_is_woocommerce_active()) {
 if (!function_exists('wooflow_get_settings')) {
 	function wooflow_get_settings() {
 		$defaults = [
-			'status'    => '',
-			'date_from' => '',
-			'date_to'   => '',
+			'status'      => '',
+			'date_from'   => '',
+			'date_to'     => '',
+			'enable_cron' => 'no',
 		];
 
 		$settings = get_option('wooflow_settings', []);
@@ -74,6 +75,39 @@ if (!function_exists('wooflow_register_admin_menu')) {
 }
 add_action('admin_menu', 'wooflow_register_admin_menu');
 
+if (!function_exists('wooflow_schedule_cron_event')) {
+	function wooflow_schedule_cron_event() {
+		$settings     = wooflow_get_settings();
+		$is_scheduled = wp_next_scheduled('wooflow_daily_export_event');
+
+		if ($settings['enable_cron'] === 'yes' && !$is_scheduled) {
+			wp_schedule_event(time() + 60, 'daily', 'wooflow_daily_export_event');
+		}
+
+		if ($settings['enable_cron'] !== 'yes' && $is_scheduled) {
+			wp_unschedule_event($is_scheduled, 'wooflow_daily_export_event');
+		}
+	}
+}
+
+if (!function_exists('wooflow_maybe_sync_cron_event')) {
+	function wooflow_maybe_sync_cron_event() {
+		wooflow_schedule_cron_event();
+	}
+}
+add_action('init', 'wooflow_maybe_sync_cron_event');
+
+if (!function_exists('wooflow_deactivate_plugin')) {
+	function wooflow_deactivate_plugin() {
+		$timestamp = wp_next_scheduled('wooflow_daily_export_event');
+
+		if ($timestamp) {
+			wp_unschedule_event($timestamp, 'wooflow_daily_export_event');
+		}
+	}
+}
+register_deactivation_hook(__FILE__, 'wooflow_deactivate_plugin');
+
 if (!function_exists('wooflow_handle_save_settings')) {
 	function wooflow_handle_save_settings() {
 		if (!current_user_can('manage_woocommerce')) {
@@ -82,9 +116,10 @@ if (!function_exists('wooflow_handle_save_settings')) {
 
 		check_admin_referer('wooflow_save_settings_action', 'wooflow_settings_nonce');
 
-		$status    = isset($_POST['wooflow_status']) ? sanitize_text_field(wp_unslash($_POST['wooflow_status'])) : '';
-		$date_from = isset($_POST['wooflow_date_from']) ? sanitize_text_field(wp_unslash($_POST['wooflow_date_from'])) : '';
-		$date_to   = isset($_POST['wooflow_date_to']) ? sanitize_text_field(wp_unslash($_POST['wooflow_date_to'])) : '';
+		$status      = isset($_POST['wooflow_status']) ? sanitize_text_field(wp_unslash($_POST['wooflow_status'])) : '';
+		$date_from   = isset($_POST['wooflow_date_from']) ? sanitize_text_field(wp_unslash($_POST['wooflow_date_from'])) : '';
+		$date_to     = isset($_POST['wooflow_date_to']) ? sanitize_text_field(wp_unslash($_POST['wooflow_date_to'])) : '';
+		$enable_cron = isset($_POST['wooflow_enable_cron']) ? 'yes' : 'no';
 
 		$allowed_statuses = array_merge([''], array_keys(wc_get_order_statuses()));
 
@@ -101,12 +136,14 @@ if (!function_exists('wooflow_handle_save_settings')) {
 		}
 
 		$settings = [
-			'status'    => $status,
-			'date_from' => $date_from,
-			'date_to'   => $date_to,
+			'status'      => $status,
+			'date_from'   => $date_from,
+			'date_to'     => $date_to,
+			'enable_cron' => $enable_cron,
 		];
 
 		update_option('wooflow_settings', $settings);
+		wooflow_schedule_cron_event();
 
 		$redirect_url = add_query_arg(
 			[
@@ -137,6 +174,30 @@ if (!function_exists('wooflow_render_admin_page')) {
 			'wooflow_export_orders_nonce',
 			'wooflow_nonce'
 		);
+
+		$upload_dir          = wp_upload_dir();
+		$export_dir          = trailingslashit($upload_dir['basedir']) . 'wooflow-exports';
+		$cron_export_message = '';
+
+		if (is_dir($export_dir)) {
+			$files = glob(trailingslashit($export_dir) . '*.csv');
+
+			if (is_array($files) && !empty($files)) {
+				usort(
+					$files,
+					function ($a, $b) {
+						return filemtime($b) - filemtime($a);
+					}
+				);
+
+				$latest_file         = basename($files[0]);
+				$cron_export_message = sprintf(
+					/* translators: %s: latest export filename */
+					esc_html__('Latest generated file: %s', 'wooflow-exporter'),
+					$latest_file
+				);
+			}
+		}
 		?>
 		<div class="wrap">
 			<h1><?php echo esc_html__('OrderFlow Exporter', 'wooflow-exporter'); ?></h1>
@@ -203,6 +264,30 @@ if (!function_exists('wooflow_render_admin_page')) {
 							>
 						</td>
 					</tr>
+
+					<tr>
+						<th scope="row">
+							<label for="wooflow_enable_cron"><?php echo esc_html__('Enable daily cron export', 'wooflow-exporter'); ?></label>
+						</th>
+						<td>
+							<label>
+								<input
+									type="checkbox"
+									name="wooflow_enable_cron"
+									id="wooflow_enable_cron"
+									value="yes"
+									<?php checked($settings['enable_cron'], 'yes'); ?>
+								>
+								<?php echo esc_html__('Generate CSV automatically once per day.', 'wooflow-exporter'); ?>
+							</label>
+							<p class="description">
+								<?php echo esc_html__('Generated files are saved to uploads/wooflow-exports/.', 'wooflow-exporter'); ?>
+							</p>
+							<?php if ($cron_export_message !== '') : ?>
+								<p class="description"><?php echo esc_html($cron_export_message); ?></p>
+							<?php endif; ?>
+						</td>
+					</tr>
 				</table>
 
 				<?php submit_button(__('Save settings', 'wooflow-exporter')); ?>
@@ -259,19 +344,8 @@ if (!function_exists('wooflow_render_admin_page')) {
 	}
 }
 
-if (!function_exists('wooflow_handle_export_orders')) {
-	function wooflow_handle_export_orders() {
-		if (!current_user_can('manage_woocommerce')) {
-			wp_die(esc_html__('Permission denied.', 'wooflow-exporter'));
-		}
-
-		if (
-			!isset($_GET['wooflow_nonce']) ||
-			!wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])), 'wooflow_export_orders_nonce')
-		) {
-			wp_die(esc_html__('Invalid nonce.', 'wooflow-exporter'));
-		}
-
+if (!function_exists('wooflow_get_order_query_args')) {
+	function wooflow_get_order_query_args() {
 		$settings = wooflow_get_settings();
 
 		$query_args = [
@@ -300,24 +374,13 @@ if (!function_exists('wooflow_handle_export_orders')) {
 			$query_args['date_created'] = $date_conditions;
 		}
 
-		$orders = wc_get_orders($query_args);
+		return $query_args;
+	}
+}
 
-		$filename = 'wooflow-orders-' . gmdate('Y-m-d-H-i-s') . '.csv';
-
-		nocache_headers();
-		header('Content-Type: text/csv; charset=utf-8');
-		header('Content-Disposition: attachment; filename=' . $filename);
-		header('Pragma: no-cache');
-		header('Expires: 0');
-
-		$output = fopen('php://output', 'w');
-
-		if ($output === false) {
-			wp_die(esc_html__('Could not open output stream.', 'wooflow-exporter'));
-		}
-
+if (!function_exists('wooflow_write_csv_header')) {
+	function wooflow_write_csv_header($output) {
 		fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
-
 		fwrite($output, "sep=;\n");
 
 		fputcsv($output, [
@@ -348,51 +411,135 @@ if (!function_exists('wooflow_handle_export_orders')) {
 			'Shipping Country',
 			'Items',
 		], ';');
+	}
+}
+
+if (!function_exists('wooflow_write_order_row')) {
+	function wooflow_write_order_row($output, $order) {
+		if (!$order instanceof WC_Order) {
+			return;
+		}
+
+		$items_summary = [];
+
+		foreach ($order->get_items() as $item) {
+			$product_name    = $item->get_name();
+			$quantity        = $item->get_quantity();
+			$items_summary[] = $product_name . ' x ' . $quantity;
+		}
+
+		$date_created = $order->get_date_created();
+		$date_string  = $date_created ? $date_created->date_i18n('Y-m-d H:i:s') : '';
+
+		fputcsv($output, [
+			wooflow_csv_text($order->get_id()),
+			wooflow_csv_text($order->get_order_number()),
+			wooflow_csv_text($date_string),
+			$order->get_status(),
+			$order->get_currency(),
+			$order->get_total(),
+			$order->get_payment_method_title(),
+			$order->get_billing_first_name(),
+			$order->get_billing_last_name(),
+			wooflow_csv_text($order->get_billing_email()),
+			wooflow_csv_text($order->get_billing_phone()),
+			$order->get_billing_company(),
+			$order->get_billing_address_1(),
+			$order->get_billing_address_2(),
+			$order->get_billing_city(),
+			wooflow_csv_text($order->get_billing_postcode()),
+			$order->get_billing_country(),
+			$order->get_shipping_first_name(),
+			$order->get_shipping_last_name(),
+			$order->get_shipping_company(),
+			$order->get_shipping_address_1(),
+			$order->get_shipping_address_2(),
+			$order->get_shipping_city(),
+			wooflow_csv_text($order->get_shipping_postcode()),
+			$order->get_shipping_country(),
+			implode(' | ', $items_summary),
+		], ';');
+	}
+}
+
+if (!function_exists('wooflow_generate_csv_file')) {
+	function wooflow_generate_csv_file() {
+		$orders = wc_get_orders(wooflow_get_order_query_args());
+
+		$upload_dir = wp_upload_dir();
+		$export_dir = trailingslashit($upload_dir['basedir']) . 'wooflow-exports';
+
+		if (!file_exists($export_dir)) {
+			wp_mkdir_p($export_dir);
+		}
+
+		if (!is_dir($export_dir) || !is_writable($export_dir)) {
+			error_log('WooFlow Exporter: export directory is not writable.');
+			return false;
+		}
+
+		$filename  = 'wooflow-orders-' . gmdate('Y-m-d-H-i-s') . '.csv';
+		$file_path = trailingslashit($export_dir) . $filename;
+
+		$output = fopen($file_path, 'w');
+
+		if ($output === false) {
+			error_log('WooFlow Exporter: could not create CSV file.');
+			return false;
+		}
+
+		wooflow_write_csv_header($output);
 
 		foreach ($orders as $order) {
-			if (!$order instanceof WC_Order) {
-				continue;
-			}
+			wooflow_write_order_row($output, $order);
+		}
 
-			$items_summary = [];
+		fclose($output);
 
-			foreach ($order->get_items() as $item) {
-				$product_name    = $item->get_name();
-				$quantity        = $item->get_quantity();
-				$items_summary[] = $product_name . ' x ' . $quantity;
-			}
+		return $file_path;
+	}
+}
 
-			$date_created = $order->get_date_created();
-			$date_string  = $date_created ? $date_created->date_i18n('Y-m-d H:i:s') : '';
+if (!function_exists('wooflow_run_daily_export')) {
+	function wooflow_run_daily_export() {
+		wooflow_generate_csv_file();
+	}
+}
+add_action('wooflow_daily_export_event', 'wooflow_run_daily_export');
 
-			fputcsv($output, [
-				wooflow_csv_text($order->get_id()),
-				wooflow_csv_text($order->get_order_number()),
-				wooflow_csv_text($date_string),
-				$order->get_status(),
-				$order->get_currency(),
-				$order->get_total(),
-				$order->get_payment_method_title(),
-				$order->get_billing_first_name(),
-				$order->get_billing_last_name(),
-				wooflow_csv_text($order->get_billing_email()),
-				wooflow_csv_text($order->get_billing_phone()),
-				$order->get_billing_company(),
-				$order->get_billing_address_1(),
-				$order->get_billing_address_2(),
-				$order->get_billing_city(),
-				wooflow_csv_text($order->get_billing_postcode()),
-				$order->get_billing_country(),
-				$order->get_shipping_first_name(),
-				$order->get_shipping_last_name(),
-				$order->get_shipping_company(),
-				$order->get_shipping_address_1(),
-				$order->get_shipping_address_2(),
-				$order->get_shipping_city(),
-				wooflow_csv_text($order->get_shipping_postcode()),
-				$order->get_shipping_country(),
-				implode(' | ', $items_summary),
-			], ';');
+if (!function_exists('wooflow_handle_export_orders')) {
+	function wooflow_handle_export_orders() {
+		if (!current_user_can('manage_woocommerce')) {
+			wp_die(esc_html__('Permission denied.', 'wooflow-exporter'));
+		}
+
+		if (
+			!isset($_GET['wooflow_nonce']) ||
+			!wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])), 'wooflow_export_orders_nonce')
+		) {
+			wp_die(esc_html__('Invalid nonce.', 'wooflow-exporter'));
+		}
+
+		$orders = wc_get_orders(wooflow_get_order_query_args());
+
+		$filename = 'wooflow-orders-' . gmdate('Y-m-d-H-i-s') . '.csv';
+
+		nocache_headers();
+		header('Content-Type: text/csv; charset=utf-8');
+		header('Content-Disposition: attachment; filename=' . $filename);
+		header('Pragma: no-cache');
+		header('Expires: 0');
+
+		$output = fopen('php://output', 'w');
+
+		if ($output === false) {
+			wp_die(esc_html__('Could not open output stream.', 'wooflow-exporter'));
+		}
+
+		wooflow_write_csv_header($output);
+
+		foreach ($orders as $order) {
+			wooflow_write_order_row($output, $order);
 		}
 
 		fclose($output);

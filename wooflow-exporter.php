@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Order Export & Automation
  * Plugin URI: https://github.com/mayokohn1985/woocommerce-order-export-automation
  * Description: Automatically export WooCommerce orders and send them where they need to go. CSV, JSON, API, automation.
- * Version: 0.3.0
+ * Version: 0.4.0
  * Author: Marián Kohn
  * Author URI: https://mayokohn.com
  * License: GPL2+
@@ -159,6 +159,40 @@ if (!function_exists('wooflow_handle_save_settings')) {
 }
 add_action('admin_post_wooflow_save_settings', 'wooflow_handle_save_settings');
 
+
+if (!function_exists('wooflow_handle_run_export_now')) {
+	function wooflow_handle_run_export_now() {
+		if (!current_user_can('manage_woocommerce')) {
+			wp_die(esc_html__('Permission denied.', 'wooflow-exporter'));
+		}
+
+		check_admin_referer('wooflow_run_export_now_action', 'wooflow_run_export_now_nonce');
+
+		$file_path = wooflow_generate_csv_file();
+
+		$redirect_args = [
+			'page' => 'wooflow-exporter',
+		];
+
+		if ($file_path) {
+			$redirect_args['message'] = 'generated';
+		} else {
+			$redirect_args['message'] = 'generate_failed';
+		}
+
+		$redirect_url = add_query_arg(
+			$redirect_args,
+			admin_url('admin.php')
+		);
+
+		wp_safe_redirect($redirect_url);
+		exit;
+	}
+}
+add_action('admin_post_wooflow_run_export_now', 'wooflow_handle_run_export_now');
+
+
+
 if (!function_exists('wooflow_render_admin_page')) {
 	function wooflow_render_admin_page() {
 		if (!current_user_can('manage_woocommerce')) {
@@ -174,6 +208,12 @@ if (!function_exists('wooflow_render_admin_page')) {
 			'wooflow_export_orders_nonce',
 			'wooflow_nonce'
 		);
+
+$run_now_url = wp_nonce_url(
+	admin_url('admin-post.php?action=wooflow_run_export_now'),
+	'wooflow_run_export_now_action',
+	'wooflow_run_export_now_nonce'
+);
 
 		$upload_dir          = wp_upload_dir();
 		$export_dir          = trailingslashit($upload_dir['basedir']) . 'wooflow-exports';
@@ -207,6 +247,19 @@ if (!function_exists('wooflow_render_admin_page')) {
 					<p><?php echo esc_html__('Settings saved.', 'wooflow-exporter'); ?></p>
 				</div>
 			<?php endif; ?>
+
+<?php if ($message === 'generated') : ?>
+	<div class="notice notice-success is-dismissible">
+		<p><?php echo esc_html__('CSV file was generated successfully.', 'wooflow-exporter'); ?></p>
+	</div>
+<?php endif; ?>
+
+<?php if ($message === 'generate_failed') : ?>
+	<div class="notice notice-error is-dismissible">
+		<p><?php echo esc_html__('CSV generation failed. Check folder permissions or debug log.', 'wooflow-exporter'); ?></p>
+	</div>
+<?php endif; ?>
+
 
 			<p><?php echo esc_html__('Export WooCommerce orders to CSV using saved filters.', 'wooflow-exporter'); ?></p>
 
@@ -334,11 +387,16 @@ if (!function_exists('wooflow_render_admin_page')) {
 				<p><?php echo esc_html__('No filters applied. Export will include all orders.', 'wooflow-exporter'); ?></p>
 			<?php endif; ?>
 
-			<p>
-				<a href="<?php echo esc_url($export_url); ?>" class="button button-primary">
-					<?php echo esc_html__('Export Orders CSV', 'wooflow-exporter'); ?>
-				</a>
-			</p>
+<p>
+	<a href="<?php echo esc_url($export_url); ?>" class="button button-primary">
+		<?php echo esc_html__('Download CSV Now', 'wooflow-exporter'); ?>
+	</a>
+
+	<a href="<?php echo esc_url($run_now_url); ?>" class="button">
+		<?php echo esc_html__('Generate CSV File Now', 'wooflow-exporter'); ?>
+	</a>
+</p>
+
 		</div>
 		<?php
 	}

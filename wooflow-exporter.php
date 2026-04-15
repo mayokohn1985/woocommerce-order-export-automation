@@ -318,6 +318,8 @@ if (!function_exists('wooflow_handle_export_orders')) {
 
 		fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
 
+		fwrite($output, "sep=;\n");
+
 		fputcsv($output, [
 			'Order ID',
 			'Order Number',

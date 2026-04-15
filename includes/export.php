@@ -122,18 +122,45 @@ if (!function_exists('wooflow_write_order_row')) {
 	}
 }
 
-if (!function_exists('wooflow_generate_csv_file')) {
-	function wooflow_generate_csv_file() {
-		$orders = wc_get_orders(wooflow_get_order_query_args());
-
+if (!function_exists('wooflow_prepare_export_dir')) {
+	function wooflow_prepare_export_dir() {
 		$export_dir = wooflow_get_export_dir();
 
 		if (!is_dir($export_dir)) {
 			wp_mkdir_p($export_dir);
 		}
 
-		if (!is_dir($export_dir) || !is_writable($export_dir)) {
+		if (!is_dir($export_dir)) {
+			error_log('WooFlow Exporter: export directory could not be created.');
+			return false;
+		}
+
+		$htaccess_path = trailingslashit($export_dir) . '.htaccess';
+
+		if (!file_exists($htaccess_path)) {
+			$result = file_put_contents($htaccess_path, "Deny from all\n");
+
+			if ($result === false) {
+				error_log('WooFlow Exporter: could not create .htaccess in export directory.');
+			}
+		}
+
+		if (!is_writable($export_dir)) {
 			error_log('WooFlow Exporter: export directory is not writable.');
+			return false;
+		}
+
+		return $export_dir;
+	}
+}
+
+if (!function_exists('wooflow_generate_csv_file')) {
+	function wooflow_generate_csv_file() {
+		$orders = wc_get_orders(wooflow_get_order_query_args());
+
+		$export_dir = wooflow_prepare_export_dir();
+
+		if ($export_dir === false) {
 			return false;
 		}
 
@@ -167,7 +194,7 @@ if (!function_exists('wooflow_stream_csv_download')) {
 
 		nocache_headers();
 		header('Content-Type: text/csv; charset=utf-8');
-		header('Content-Disposition: attachment; filename=' . $filename);
+		header('Content-Disposition: attachment; filename="' . $filename . '"');
 		header('Pragma: no-cache');
 		header('Expires: 0');
 

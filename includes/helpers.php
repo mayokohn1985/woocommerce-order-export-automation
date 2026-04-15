@@ -29,14 +29,7 @@ if (!function_exists('wooflow_csv_text')) {
 
 if (!function_exists('wooflow_get_export_dir')) {
 	function wooflow_get_export_dir() {
-		$upload_dir = wp_upload_dir();
-		return trailingslashit($upload_dir['basedir']) . 'wooflow-exports';
+		return trailingslashit(WP_CONTENT_DIR) . 'wooflow-private';
 	}
 }
 
-if (!function_exists('wooflow_get_export_url_base')) {
-	function wooflow_get_export_url_base() {
-		$upload_dir = wp_upload_dir();
-		return trailingslashit($upload_dir['baseurl']) . 'wooflow-exports';
-	}
-}

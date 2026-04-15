@@ -340,7 +340,7 @@ if (!function_exists('wooflow_render_admin_page')) {
 								<?php echo esc_html__('Generate CSV automatically once per day.', 'wooflow-exporter'); ?>
 							</label>
 							<p class="description">
-								<?php echo esc_html__('Generated files are saved to uploads/wooflow-exports/.', 'wooflow-exporter'); ?>
+								<?php echo esc_html__('Generated files are stored securely and accessible only via admin.', 'wooflow-exporter'); ?>
 							</p>
 						</td>
 					</tr>

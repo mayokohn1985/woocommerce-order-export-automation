@@ -99,7 +99,10 @@ if (!function_exists('wooflow_handle_export_orders')) {
 
 		if (
 			!isset($_GET['wooflow_nonce']) ||
-			!wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])), 'wooflow_export_orders_nonce')
+			!wp_verify_nonce(
+				sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])),
+				'wooflow_export_orders_nonce'
+			)
 		) {
 			wp_die(esc_html__('Invalid nonce.', 'wooflow-exporter'));
 		}
@@ -109,16 +112,98 @@ if (!function_exists('wooflow_handle_export_orders')) {
 }
 add_action('admin_post_wooflow_export_orders', 'wooflow_handle_export_orders');
 
+if (!function_exists('wooflow_handle_download_file')) {
+	function wooflow_handle_download_file() {
+		if (!current_user_can('manage_woocommerce')) {
+			wp_die(esc_html__('Permission denied.', 'wooflow-exporter'));
+		}
+
+		if (
+			!isset($_GET['wooflow_nonce']) ||
+			!wp_verify_nonce(
+				sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])),
+				'wooflow_download_file_nonce'
+			)
+		) {
+			wp_die(esc_html__('Invalid nonce.', 'wooflow-exporter'));
+		}
+
+		if (!isset($_GET['file'])) {
+			wp_die(esc_html__('Missing file.', 'wooflow-exporter'));
+		}
+
+		$file_name = basename(sanitize_text_field(wp_unslash($_GET['file'])));
+		$file_path = trailingslashit(wooflow_get_export_dir()) . $file_name;
+
+		if (!file_exists($file_path) || !is_readable($file_path)) {
+			wp_die(esc_html__('File not found.', 'wooflow-exporter'));
+		}
+
+		nocache_headers();
+		header('Content-Type: text/csv; charset=utf-8');
+		header('Content-Disposition: attachment; filename="' . $file_name . '"');
+		header('Content-Length: ' . filesize($file_path));
+		header('Pragma: no-cache');
+		header('Expires: 0');
+
+		readfile($file_path);
+		exit;
+	}
+}
+add_action('admin_post_wooflow_download_file', 'wooflow_handle_download_file');
+
+if (!function_exists('wooflow_handle_delete_file')) {
+	function wooflow_handle_delete_file() {
+		if (!current_user_can('manage_woocommerce')) {
+			wp_die(esc_html__('Permission denied.', 'wooflow-exporter'));
+		}
+
+		if (
+			!isset($_GET['wooflow_nonce']) ||
+			!wp_verify_nonce(
+				sanitize_text_field(wp_unslash($_GET['wooflow_nonce'])),
+				'wooflow_delete_file_nonce'
+			)
+		) {
+			wp_die(esc_html__('Invalid nonce.', 'wooflow-exporter'));
+		}
+
+		if (!isset($_GET['file'])) {
+			wp_die(esc_html__('Missing file.', 'wooflow-exporter'));
+		}
+
+		$file_name = basename(sanitize_text_field(wp_unslash($_GET['file'])));
+		$file_path = trailingslashit(wooflow_get_export_dir()) . $file_name;
+
+		if (file_exists($file_path) && is_file($file_path)) {
+			unlink($file_path);
+		}
+
+		$redirect_url = add_query_arg(
+			[
+				'page'    => 'wooflow-exporter',
+				'message' => 'deleted',
+			],
+			admin_url('admin.php')
+		);
+
+		wp_safe_redirect($redirect_url);
+		exit;
+	}
+}
+add_action('admin_post_wooflow_delete_file', 'wooflow_handle_delete_file');
+
 if (!function_exists('wooflow_render_admin_page')) {
 	function wooflow_render_admin_page() {
 		if (!current_user_can('manage_woocommerce')) {
 			wp_die(esc_html__('You do not have permission to access this page.', 'wooflow-exporter'));
 		}
 
-		$settings = wooflow_get_settings();
-		$statuses = wc_get_order_statuses();
-		$save_url = admin_url('admin-post.php');
-		$message  = isset($_GET['message']) ? sanitize_text_field(wp_unslash($_GET['message'])) : '';
+		$settings        = wooflow_get_settings();
+		$statuses        = wc_get_order_statuses();
+		$save_url        = admin_url('admin-post.php');
+		$message         = isset($_GET['message']) ? sanitize_text_field(wp_unslash($_GET['message'])) : '';
+		$generated_files = wooflow_get_generated_files();
 
 		$export_url = wp_nonce_url(
 			admin_url('admin-post.php?action=wooflow_export_orders'),
@@ -131,8 +216,6 @@ if (!function_exists('wooflow_render_admin_page')) {
 			'wooflow_run_export_now_action',
 			'wooflow_run_export_now_nonce'
 		);
-
-		$generated_files = wooflow_get_generated_files();
 
 		$active_filters = [];
 
@@ -175,6 +258,12 @@ if (!function_exists('wooflow_render_admin_page')) {
 			<?php if ($message === 'generate_failed') : ?>
 				<div class="notice notice-error is-dismissible">
 					<p><?php echo esc_html__('CSV generation failed. Check folder permissions or debug log.', 'wooflow-exporter'); ?></p>
+				</div>
+			<?php endif; ?>
+
+			<?php if ($message === 'deleted') : ?>
+				<div class="notice notice-success is-dismissible">
+					<p><?php echo esc_html__('CSV file was deleted successfully.', 'wooflow-exporter'); ?></p>
 				</div>
 			<?php endif; ?>
 
@@ -294,37 +383,47 @@ if (!function_exists('wooflow_render_admin_page')) {
 							<th><?php echo esc_html__('File', 'wooflow-exporter'); ?></th>
 							<th><?php echo esc_html__('Created', 'wooflow-exporter'); ?></th>
 							<th><?php echo esc_html__('Size', 'wooflow-exporter'); ?></th>
+							<th><?php echo esc_html__('Actions', 'wooflow-exporter'); ?></th>
 						</tr>
 					</thead>
-
-
-<tbody>
-<?php foreach ($generated_files as $file_path) : 
-    $file_name = basename($file_path);
-    $file_url  = wooflow_get_export_url_base() . $file_name;
-
-    $delete_url = wp_nonce_url(
-        admin_url('admin-post.php?action=wooflow_delete_file&file=' . urlencode($file_name)),
-        'wooflow_delete_file_nonce',
-        'wooflow_nonce'
-    );
-?>
-<tr>
-    <td>
-        <a href="<?php echo esc_url($file_url); ?>" target="_blank">
-            <?php echo esc_html($file_name); ?>
-        </a>
-    </td>
-    <td><?php echo esc_html(wp_date('Y-m-d H:i:s', filemtime($file_path))); ?></td>
-    <td><?php echo esc_html(size_format(filesize($file_path))); ?></td>
-    <td>
-        <a href="<?php echo esc_url($delete_url); ?>" class="button button-small" onclick="return confirm('Delete file?');">
-            Delete
-        </a>
-    </td>
-</tr>
-<?php endforeach; ?>
-</tbody>
+					<tbody>
+						<?php foreach ($generated_files as $file_path) : ?>
+							<?php
+							$file_name    = basename($file_path);
+							$download_url = wp_nonce_url(
+								admin_url('admin-post.php?action=wooflow_download_file&file=' . rawurlencode($file_name)),
+								'wooflow_download_file_nonce',
+								'wooflow_nonce'
+							);
+							$delete_url = wp_nonce_url(
+								admin_url('admin-post.php?action=wooflow_delete_file&file=' . rawurlencode($file_name)),
+								'wooflow_delete_file_nonce',
+								'wooflow_nonce'
+							);
+							?>
+							<tr>
+								<td>
+									<a href="<?php echo esc_url($download_url); ?>">
+										<?php echo esc_html($file_name); ?>
+									</a>
+								</td>
+								<td><?php echo esc_html(wp_date('Y-m-d H:i:s', filemtime($file_path))); ?></td>
+								<td><?php echo esc_html(size_format(filesize($file_path))); ?></td>
+								<td>
+									<a href="<?php echo esc_url($download_url); ?>" class="button button-small">
+										<?php echo esc_html__('Download', 'wooflow-exporter'); ?>
+									</a>
+									<a
+										href="<?php echo esc_url($delete_url); ?>"
+										class="button button-small"
+										onclick="return confirm('<?php echo esc_js(__('Delete this file?', 'wooflow-exporter')); ?>');"
+									>
+										<?php echo esc_html__('Delete', 'wooflow-exporter'); ?>
+									</a>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
 				</table>
 			<?php else : ?>
 				<p><?php echo esc_html__('No generated CSV files found yet.', 'wooflow-exporter'); ?></p>
@@ -333,30 +432,3 @@ if (!function_exists('wooflow_render_admin_page')) {
 		<?php
 	}
 }
-add_action('admin_post_wooflow_delete_file', function () {
-
-    if (!current_user_can('manage_woocommerce')) {
-        wp_die('Permission denied');
-    }
-
-    if (
-        !isset($_GET['wooflow_nonce']) ||
-        !wp_verify_nonce($_GET['wooflow_nonce'], 'wooflow_delete_file_nonce')
-    ) {
-        wp_die('Invalid nonce');
-    }
-
-    if (!isset($_GET['file'])) {
-        wp_die('Missing file');
-    }
-
-    $file_name = basename(sanitize_text_field($_GET['file']));
-    $file_path = trailingslashit(wooflow_get_export_dir()) . $file_name;
-
-    if (file_exists($file_path)) {
-        unlink($file_path);
-    }
-
-    wp_safe_redirect(admin_url('admin.php?page=wooflow-exporter'));
-    exit;
-});

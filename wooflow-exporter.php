@@ -76,6 +76,13 @@ if (!function_exists('wooflow_render_admin_page')) {
 	}
 }
 
+if (!function_exists('wooflow_csv_text')) {
+	function wooflow_csv_text($value) {
+		$value = (string) $value;
+		return '="' . str_replace('"', '""', $value) . '"';
+	}
+}
+
 if (!function_exists('wooflow_handle_export_orders')) {
 	function wooflow_handle_export_orders() {
 		if (!current_user_can('manage_woocommerce')) {
@@ -158,34 +165,36 @@ if (!function_exists('wooflow_handle_export_orders')) {
 			$date_created = $order->get_date_created();
 			$date_string  = $date_created ? $date_created->date_i18n('Y-m-d H:i:s') : '';
 
-			fputcsv($output, [
-				$order->get_id(),
-				$order->get_order_number(),
-				$date_string,
-				$order->get_status(),
-				$order->get_currency(),
-				$order->get_total(),
-				$order->get_payment_method_title(),
-				$order->get_billing_first_name(),
-				$order->get_billing_last_name(),
-				$order->get_billing_email(),
-				$order->get_billing_phone(),
-				$order->get_billing_company(),
-				$order->get_billing_address_1(),
-				$order->get_billing_address_2(),
-				$order->get_billing_city(),
-				$order->get_billing_postcode(),
-				$order->get_billing_country(),
-				$order->get_shipping_first_name(),
-				$order->get_shipping_last_name(),
-				$order->get_shipping_company(),
-				$order->get_shipping_address_1(),
-				$order->get_shipping_address_2(),
-				$order->get_shipping_city(),
-				$order->get_shipping_postcode(),
-				$order->get_shipping_country(),
-				implode(' | ', $items_summary),
-			]);
+
+fputcsv($output, [
+	wooflow_csv_text($order->get_id()),
+	wooflow_csv_text($order->get_order_number()),
+	wooflow_csv_text($date_string),
+	$order->get_status(),
+	$order->get_currency(),
+	$order->get_total(),
+	$order->get_payment_method_title(),
+	$order->get_billing_first_name(),
+	$order->get_billing_last_name(),
+	wooflow_csv_text($order->get_billing_email()),
+	wooflow_csv_text($order->get_billing_phone()),
+	$order->get_billing_company(),
+	$order->get_billing_address_1(),
+	$order->get_billing_address_2(),
+	$order->get_billing_city(),
+	wooflow_csv_text($order->get_billing_postcode()),
+	$order->get_billing_country(),
+	$order->get_shipping_first_name(),
+	$order->get_shipping_last_name(),
+	$order->get_shipping_company(),
+	$order->get_shipping_address_1(),
+	$order->get_shipping_address_2(),
+	$order->get_shipping_city(),
+	wooflow_csv_text($order->get_shipping_postcode()),
+	$order->get_shipping_country(),
+	implode(' | ', $items_summary),
+]);
+
 		}
 
 		fclose($output);

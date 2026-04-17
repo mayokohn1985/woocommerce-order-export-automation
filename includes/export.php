@@ -4,14 +4,14 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
-if (!function_exists('wooflow_get_order_query_args')) {
-	function wooflow_get_order_query_args() {
+if (!function_exists('wooflow_get_order_query_base_args')) {
+	function wooflow_get_order_query_base_args() {
 		$settings = wooflow_get_settings();
 
 		$query_args = [
-			'limit'   => -1,
 			'orderby' => 'date',
 			'order'   => 'DESC',
+			'return'  => 'objects',
 		];
 
 		if (!empty($settings['status'])) {
@@ -35,6 +35,57 @@ if (!function_exists('wooflow_get_order_query_args')) {
 		}
 
 		return $query_args;
+	}
+}
+
+if (!function_exists('wooflow_get_order_query_args')) {
+	function wooflow_get_order_query_args($page = 1, $limit = 100) {
+		$query_args = wooflow_get_order_query_base_args();
+
+		$query_args['limit'] = max(1, (int) $limit);
+		$query_args['paged'] = max(1, (int) $page);
+
+		return $query_args;
+	}
+}
+
+if (!function_exists('wooflow_get_export_batch_size')) {
+	function wooflow_get_export_batch_size() {
+		$batch_size = (int) apply_filters('wooflow_export_batch_size', 100);
+
+		if ($batch_size < 1) {
+			$batch_size = 100;
+		}
+
+		return $batch_size;
+	}
+}
+
+if (!function_exists('wooflow_escape_csv_cell')) {
+	function wooflow_escape_csv_cell($value) {
+		if (is_null($value)) {
+			$value = '';
+		} elseif (is_bool($value)) {
+			$value = $value ? '1' : '0';
+		} elseif (is_array($value) || is_object($value)) {
+			$value = wp_json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+		} else {
+			$value = (string) $value;
+		}
+
+		// Odstránenie problémových riadiacich znakov, ale ponechanie \t \n \r.
+		$value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value);
+
+		/*
+		 * Ochrana proti CSV injection:
+		 * ak hodnota začína (aj po whitespace) na = + - @
+		 * prefixneme ju apostrofom.
+		 */
+		if (preg_match('/^\s*[=\+\-@]/u', $value)) {
+			$value = "'" . $value;
+		}
+
+		return $value;
 	}
 }
 
@@ -74,12 +125,8 @@ if (!function_exists('wooflow_write_csv_header')) {
 	}
 }
 
-if (!function_exists('wooflow_write_order_row')) {
-	function wooflow_write_order_row($output, $order) {
-		if (!$order instanceof WC_Order) {
-			return;
-		}
-
+if (!function_exists('wooflow_build_items_summary')) {
+	function wooflow_build_items_summary($order) {
 		$items_summary = [];
 
 		foreach ($order->get_items() as $item) {
@@ -88,37 +135,72 @@ if (!function_exists('wooflow_write_order_row')) {
 			$items_summary[] = $product_name . ' x ' . $quantity;
 		}
 
+		return implode(' | ', $items_summary);
+	}
+}
+
+if (!function_exists('wooflow_write_order_row')) {
+	function wooflow_write_order_row($output, $order) {
+		if (!$order instanceof WC_Order) {
+			return;
+		}
+
 		$date_created = $order->get_date_created();
 		$date_string  = $date_created ? $date_created->date_i18n('Y-m-d H:i:s') : '';
 
-		fputcsv($output, [
-			wooflow_csv_text($order->get_id()),
-			wooflow_csv_text($order->get_order_number()),
-			wooflow_csv_text($date_string),
-			$order->get_status(),
-			$order->get_currency(),
-			$order->get_total(),
-			$order->get_payment_method_title(),
-			$order->get_billing_first_name(),
-			$order->get_billing_last_name(),
-			wooflow_csv_text($order->get_billing_email()),
-			wooflow_csv_text($order->get_billing_phone()),
-			$order->get_billing_company(),
-			$order->get_billing_address_1(),
-			$order->get_billing_address_2(),
-			$order->get_billing_city(),
-			wooflow_csv_text($order->get_billing_postcode()),
-			$order->get_billing_country(),
-			$order->get_shipping_first_name(),
-			$order->get_shipping_last_name(),
-			$order->get_shipping_company(),
-			$order->get_shipping_address_1(),
-			$order->get_shipping_address_2(),
-			$order->get_shipping_city(),
-			wooflow_csv_text($order->get_shipping_postcode()),
-			$order->get_shipping_country(),
-			implode(' | ', $items_summary),
-		], ';');
+		$row = [
+			wooflow_escape_csv_cell($order->get_id()),
+			wooflow_escape_csv_cell($order->get_order_number()),
+			wooflow_escape_csv_cell($date_string),
+			wooflow_escape_csv_cell($order->get_status()),
+			wooflow_escape_csv_cell($order->get_currency()),
+			wooflow_escape_csv_cell($order->get_total()),
+			wooflow_escape_csv_cell($order->get_payment_method_title()),
+			wooflow_escape_csv_cell($order->get_billing_first_name()),
+			wooflow_escape_csv_cell($order->get_billing_last_name()),
+			wooflow_escape_csv_cell($order->get_billing_email()),
+			wooflow_escape_csv_cell($order->get_billing_phone()),
+			wooflow_escape_csv_cell($order->get_billing_company()),
+			wooflow_escape_csv_cell($order->get_billing_address_1()),
+			wooflow_escape_csv_cell($order->get_billing_address_2()),
+			wooflow_escape_csv_cell($order->get_billing_city()),
+			wooflow_escape_csv_cell($order->get_billing_postcode()),
+			wooflow_escape_csv_cell($order->get_billing_country()),
+			wooflow_escape_csv_cell($order->get_shipping_first_name()),
+			wooflow_escape_csv_cell($order->get_shipping_last_name()),
+			wooflow_escape_csv_cell($order->get_shipping_company()),
+			wooflow_escape_csv_cell($order->get_shipping_address_1()),
+			wooflow_escape_csv_cell($order->get_shipping_address_2()),
+			wooflow_escape_csv_cell($order->get_shipping_city()),
+			wooflow_escape_csv_cell($order->get_shipping_postcode()),
+			wooflow_escape_csv_cell($order->get_shipping_country()),
+			wooflow_escape_csv_cell(wooflow_build_items_summary($order)),
+		];
+
+		fputcsv($output, $row, ';');
+	}
+}
+
+if (!function_exists('wooflow_write_orders_to_csv')) {
+	function wooflow_write_orders_to_csv($output) {
+		$page       = 1;
+		$batch_size = wooflow_get_export_batch_size();
+
+		do {
+			$orders = wc_get_orders(wooflow_get_order_query_args($page, $batch_size));
+
+			if (empty($orders)) {
+				break;
+			}
+
+			foreach ($orders as $order) {
+				wooflow_write_order_row($output, $order);
+			}
+
+			// Uvoľnenie pamäte po dávke.
+			unset($orders);
+			$page++;
+		} while (true);
 	}
 }
 
@@ -156,8 +238,6 @@ if (!function_exists('wooflow_prepare_export_dir')) {
 
 if (!function_exists('wooflow_generate_csv_file')) {
 	function wooflow_generate_csv_file() {
-		$orders = wc_get_orders(wooflow_get_order_query_args());
-
 		$export_dir = wooflow_prepare_export_dir();
 
 		if ($export_dir === false) {
@@ -175,10 +255,7 @@ if (!function_exists('wooflow_generate_csv_file')) {
 		}
 
 		wooflow_write_csv_header($output);
-
-		foreach ($orders as $order) {
-			wooflow_write_order_row($output, $order);
-		}
+		wooflow_write_orders_to_csv($output);
 
 		fclose($output);
 
@@ -188,8 +265,6 @@ if (!function_exists('wooflow_generate_csv_file')) {
 
 if (!function_exists('wooflow_stream_csv_download')) {
 	function wooflow_stream_csv_download() {
-		$orders = wc_get_orders(wooflow_get_order_query_args());
-
 		$filename = 'wooflow-orders-' . wp_date('Y-m-d-H-i-s') . '.csv';
 
 		nocache_headers();
@@ -205,10 +280,7 @@ if (!function_exists('wooflow_stream_csv_download')) {
 		}
 
 		wooflow_write_csv_header($output);
-
-		foreach ($orders as $order) {
-			wooflow_write_order_row($output, $order);
-		}
+		wooflow_write_orders_to_csv($output);
 
 		fclose($output);
 		exit;

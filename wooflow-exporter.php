@@ -3,7 +3,7 @@
  * Plugin Name: WooFlow Exporter
  * Plugin URI: https://github.com/mayokohn1985/woocommerce-order-export-automation
  * Description: Export WooCommerce orders to CSV manually or automatically via cron.
- * Version: 0.6.0
+ * Version: 0.7.0
  * Author: Marián Kohn
  * Author URI: https://mayokohn.com
  * License: GPL2+
